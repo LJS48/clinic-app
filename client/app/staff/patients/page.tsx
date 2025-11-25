@@ -19,6 +19,7 @@ import { Label } from "@/components/ui/label"
 import { Search, User, Phone, Mail, Calendar, Plus } from "lucide-react"
 import { apiPath } from "@/app/lib/api"
 import { NewAppointmentForm } from "@/components/appointments/new-appointment-form"
+import { formatPhoneNumber } from "@/lib/utils"
 
 const authUser = JSON.parse(localStorage.getItem("authUser") || "{}");
 const staffId = Number(authUser?.user_id);
@@ -371,53 +372,49 @@ function PatientRow({
   const [middleInitial, setMiddleInitial] = useState(patient.patient_minit ?? "")
   const [lastName, setLastName] = useState(patient.patient_lname)
   const [email, setEmail] = useState(patient.email)
-  const [phone, setPhone] = useState(patient.phone)
-  const [dob, setDob] = useState(patient.dob ?? "")
+  const [phone, setPhone] = useState("")
+  const [dob, setDob] = useState("")
   const [isSaving, setIsSaving] = useState(false)
   const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [isLoadingDetails, setIsLoadingDetails] = useState(false)
 
-  // Keep local state in sync if parent changes the patient
+  // Fetch full patient details when dialog opens
   useEffect(() => {
-    // Prefer explicit fname/minit/lname if available, otherwise parse the display name
-    if (patient.patient_fname) {
-      setFirstName(patient.patient_fname)
-      setMiddleInitial(patient.patient_minit ?? "")
-      setLastName(patient.patient_lname)
-    } else if (patient.name) {
-      const parts = String(patient.name).trim().split(/\s+/)
-      if (parts.length === 1) {
-        setFirstName(parts[0])
-        setMiddleInitial("")
-        setLastName("")
-      } else if (parts.length === 2) {
-        setFirstName(parts[0])
-        setMiddleInitial("")
-        setLastName(parts[1])
-      } else {
-        // e.g. [First, M, Last...]
-        const first = parts[0]
-        const maybeM = parts[1].replace(/\./g, "")
-        const rest = parts.slice(2).join(" ")
-        if (maybeM.length === 1) {
-          setFirstName(first)
-          setMiddleInitial(maybeM)
-          setLastName(rest)
-        } else {
-          // treat middle as part of last name
-          setFirstName(first)
-          setMiddleInitial("")
-          setLastName(parts.slice(1).join(" "))
+    if (open && !isLoadingDetails) {
+      const fetchPatientDetails = async () => {
+        setIsLoadingDetails(true)
+        try {
+          const token = typeof window !== "undefined" ? window.localStorage.getItem("authToken") : null
+          const res = await fetch(apiPath(`/patients/${patient.patientId}`), {
+            headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+            credentials: "include",
+          })
+          const data = await res.json().catch(() => ({}))
+          if (res.ok && data.patient) {
+            const p = data.patient
+            setFirstName(p.patient_fname || "")
+            setMiddleInitial(p.patient_minit || "")
+            setLastName(p.patient_lname || "")
+            setEmail(p.patient_email || p.email || "")
+            setPhone(p.phone || "")
+            // Format date for input (YYYY-MM-DD)
+            if (p.dob) {
+              const date = new Date(p.dob)
+              const formatted = date.toISOString().split('T')[0]
+              setDob(formatted)
+            } else {
+              setDob("")
+            }
+          }
+        } catch (err) {
+          console.error("Failed to fetch patient details:", err)
+        } finally {
+          setIsLoadingDetails(false)
         }
       }
-    } else {
-      setFirstName("")
-      setMiddleInitial("")
-      setLastName("")
+      fetchPatientDetails()
     }
-    setEmail(patient.email)
-    setPhone(patient.phone)
-    setDob(patient.dob ?? "")
-  }, [patient])
+  }, [open, patient.patientId])
 
   // Build display name using explicit name parts so middle initial shows with a period
   const parts = [
@@ -437,7 +434,7 @@ function PatientRow({
         patient_minit: middleInitial || null,
         patient_lname: lastName,
         patient_email: email,
-        phone,
+        phone: phone.replace(/\D/g, ""), // Send only digits to backend
         dob: dob || null,
       }
 
@@ -470,15 +467,16 @@ function PatientRow({
         patient_lname: payload.patient_lname,
         name: displayName,
         email,
-        phone,
+        phone: payload.phone,
         dob: dob || null,
       }
 
       onUpdate(updated)
       setOpen(false)
+      onNotify?.("Patient updated successfully", "success")
     } catch (err) {
       console.error(err)
-      alert("There was an error updating the patient.")
+      onNotify?.("There was an error updating the patient.", "error")
     } finally {
       setIsSaving(false)
     }
@@ -611,7 +609,7 @@ function PatientRow({
                     <Input
                       id={`dob-${patient.patientId}`}
                       type="date"
-                      value={dob ?? ""}
+                      value={dob}
                       onChange={(e) => setDob(e.target.value)}
                     />
                   </div>
@@ -632,8 +630,12 @@ function PatientRow({
                     <Input
                       id={`phone-${patient.patientId}`}
                       type="tel"
-                      value={phone}
-                      onChange={(e) => setPhone(e.target.value)}
+                      value={formatPhoneNumber(phone)}
+                      onChange={(e) => {
+                        const rawDigits = e.target.value.replace(/\D/g, "")
+                        setPhone(rawDigits)
+                      }}
+                      placeholder="(555) 123-4567"
                       required
                     />
                   </div>
@@ -658,7 +660,7 @@ function PatientRow({
                       <Button type="button" variant="outline" onClick={() => setOpen(false)}>
                         Cancel
                       </Button>
-                      <Button type="submit" disabled={isSaving}>
+                      <Button type="submit" disabled={isSaving || isLoadingDetails}>
                         {isSaving ? "Saving..." : "Save"}
                       </Button>
                     </>
