@@ -13,7 +13,7 @@ export async function getAppointmentById(id) {
 }
 
 export async function createAppointment(payload) {
-  const { patientId, providerId, start, end } = payload;
+  const { patientId, providerId, start, end, procedureCode, amount } = payload;
 
   // Check for overlapping appointments for the patient
   if (patientId) {
@@ -43,69 +43,8 @@ export async function createAppointment(payload) {
     }
   }
 
-  const appointmentId = await appointmentRepository.insertAppointment(payload);
-
-  // Send email notification to patient (async, non-blocking)
-  sendAppointmentEmail(appointmentId, patientId, doctorId, start, payload.reason).catch((err) => {
-    console.error("Failed to send appointment email:", err);
-  });
-
-  return appointmentId;
-}
-
-async function sendAppointmentEmail(appointmentId, patientId, doctorId, startTime, reason) {
-  try {
-    // Fetch patient details - uses patient_email, patient_fname, patient_lname
-    const patient = await findPatientById(patientId);
-    if (!patient || !patient.patient_email) {
-      console.log("Patient email not found, skipping notification");
-      return;
-    }
-
-    // Fetch doctor details - uses doc_fname, doc_lname
-    let doctorName = null;
-    if (doctorId) {
-      const [doctorRows] = await pool.query(
-        "SELECT doc_fname, doc_lname FROM doctor WHERE doctor_id = ?",
-        [doctorId]
-      );
-      if (doctorRows && doctorRows.length > 0) {
-        const doctor = doctorRows[0];
-        doctorName = `${doctor.doc_fname} ${doctor.doc_lname}`;
-      }
-    }
-
-    // Format date and time from start_at
-    const appointmentDateTime = new Date(startTime);
-    const appointmentDate = appointmentDateTime.toLocaleDateString("en-US", {
-      weekday: "long",
-      year: "numeric",
-      month: "long",
-      day: "numeric",
-    });
-    const appointmentTime = appointmentDateTime.toLocaleTimeString("en-US", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-    });
-
-    const patientName = `${patient.patient_fname} ${patient.patient_lname}`;
-
-    // Send email
-    await sendAppointmentConfirmation({
-      patientEmail: patient.patient_email,
-      patientName,
-      appointmentDate,
-      appointmentTime,
-      doctorName,
-      reason,
-    });
-
-    console.log(`Appointment confirmation email sent to ${patient.patient_email}`);
-  } catch (error) {
-    console.error("Error in sendAppointmentEmail:", error);
-    throw error;
-  }
+  // forward payload (including optional procedureCode and amount) to repository
+  return appointmentRepository.insertAppointment(payload);
 }
 
 export async function updateAppointment(id, patch) {
@@ -154,6 +93,8 @@ export async function getRecentPatientAppointments(patientId, { limit = 50 } = {
     time: formatAppointmentTime(row.start_at ?? null),
     duration: calculateDuration(row.start_at ?? null, row.end_at ?? null),
     notes: row.notes ?? null,
+    procedure_code: row.procedure_code ?? null,
+    amount: row.amount ?? null,
   }));
 }
 
@@ -182,6 +123,8 @@ export async function getRecentDoctorAppointments(doctorId, { limit = 50 } = {})
     time: formatAppointmentTime(row.start_at ?? null),
     duration: calculateDuration(row.start_at ?? null, row.end_at ?? null),
     notes: row.notes ?? null,
+    procedure_code: row.procedure_code ?? null,
+    amount: row.amount ?? null,
   }));
 }
 
@@ -211,6 +154,8 @@ export async function getRecentStaffAppointments({ limit = 100 } = {}) {
     time: formatAppointmentTime(row.start_at ?? null),
     duration: calculateDuration(row.start_at ?? null, row.end_at ?? null),
     notes: row.notes ?? null,
+    procedure_code: row.procedure_code ?? null,
+    amount: row.amount ?? null,
   }));
 }
 
